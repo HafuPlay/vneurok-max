@@ -1,4 +1,4 @@
-"""Transactional domain model. All mutations acquire one SQLite write transaction."""
+"""Правила работы с идеями, задачами, помещениями и записью."""
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -160,7 +160,7 @@ class Store:
         registrations = [dict(t) for t in db.execute('SELECT r.user_id,u.name,r.attended FROM registrations r JOIN users u ON u.id=r.user_id WHERE initiative_id=? ORDER BY r.created_at',(initiative_id,))]
         row['registration_count'] = len(registrations)
         row['my_registration'] = any(r['user_id']==actor['id'] for r in registrations)
-        # Other pupils do not get a roster or attendance details.
+        # Другим ученикам не показываем чужие записи и посещаемость.
         row['registrations'] = registrations if actor['role']=='curator' or row['owner_id']==actor['id'] else [r for r in registrations if r['user_id']==actor['id']]
         row['history'] = [dict(h) for h in db.execute('SELECT action,note,created_at FROM history WHERE initiative_id=? ORDER BY id DESC',(initiative_id,))]
         return row
@@ -207,7 +207,7 @@ class Store:
         db.execute('UPDATE initiatives SET version=version+1,updated_at=? WHERE id=?',(now_iso(),row['id']))
 
     def _notify(self,db,row,event,recipients):
-        # Transactional outbox: no external request is made during a domain mutation.
+        # Сначала сохраняем решение, а сообщение отправим отдельно.
         for uid in set(recipients):
             payload=json.dumps({'text':f'«{row["title"]}»: {event}. Откройте карточку во «Внеуроке».','initiative_id':row['id']},ensure_ascii=False)
             db.execute('INSERT INTO outbox(user_id,initiative_id,event,payload,created_at) VALUES(?,?,?,?,?)',(uid,row['id'],event,payload,now_iso()))
@@ -245,7 +245,7 @@ class Store:
             if not changed:
                 return self._detail(db,iid,actor)
             recipients=self._audience(db,row)
-            # Every meaningful edit invalidates approval and cancels previous signups.
+            # После изменения условий нужно снова согласовать событие и записаться.
             new_status='needs_changes' if row['status'] in ('submitted','approved','registration') else row['status']
             db.execute(f'UPDATE initiatives SET {",".join(k+"=?" for k in values)},status=?,approved_by=NULL WHERE id=?', [*values.values(),new_status,iid])
             db.execute('DELETE FROM registrations WHERE initiative_id=?',(iid,))
@@ -259,7 +259,7 @@ class Store:
             require(self._can_view(db,row,actor),'forbidden','Нет доступа к карточке.',403)
             action=raw.get('action'); status=row['status']; owner=row['owner_id']==user_id
             curator=actor['role']=='curator'
-            # Set semantics make repeated registrations/cancellations harmless, even after refresh.
+            # Повторное нажатие не добавит человека второй раз.
             existing=db.execute('SELECT 1 FROM registrations WHERE initiative_id=? AND user_id=?',(iid,user_id)).fetchone()
             if action=='register' and existing:
                 return self._detail(db,iid,actor)

@@ -1,12 +1,10 @@
-"""MAX boundary. No network call is made unless flush_outbox(send=True) is invoked.
-Protocol sources checked 2026-11-07: https://dev.max.ru/docs/webapps/validation
-and https://dev.max.ru/docs-api/methods/POST/messages.
-"""
+"""Проверка входа, получение событий и ответы MAX. Отправку нужно включить отдельно."""
 import hashlib
 import hmac
 import json
 import re
 import time
+import threading
 from urllib.parse import parse_qsl, urlencode
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
@@ -51,7 +49,7 @@ def accept_webhook(store,payload,provided_secret,expected_secret,app_url):
     require(isinstance(user,dict) and type(user.get('user_id')) is int,'invalid_webhook','Нет пользователя в событии MAX.')
     if kind=='message_created':
         message=payload.get('message',{})
-        # Never answer a group or an arbitrary message as if it were a private command.
+        # Команды из общих чатов здесь не обрабатываются.
         if message.get('recipient',{}).get('chat_type') != 'dialog' or message.get('body',{}).get('text','').strip() not in ('/start','/help'):
             return {'ok':True,'ignored':True}
     with store.connection(True) as db:
@@ -72,9 +70,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def flush_outbox(store,token=None,send=False,transport=None):
-    """One explicit pass. Ambiguous sends stay uncertain, never automatically retried.
-    Domain writes are independent of delivery. Dry run returns counts only, not personal data.
-    """
+    """Проверяем очередь. Если доставка неясна, сообщение не отправляется повторно."""
     with store.connection() as db:
         pending=db.execute("SELECT o.id,o.payload,u.max_id FROM outbox o JOIN users u ON u.id=o.user_id WHERE o.state='pending' ORDER BY o.id").fetchall()
     if not send:
@@ -82,11 +78,7 @@ def flush_outbox(store,token=None,send=False,transport=None):
     require(bool(token),'unconfigured','Не настроен токен MAX.')
     sent=failed=uncertain=0
     def network_send(recipient,payload):
-        req=Request('https://platform-api2.max.ru/messages?'+urlencode({'user_id':recipient}),data=json.dumps(payload,ensure_ascii=False).encode(),headers={'Authorization':token,'Content-Type':'application/json'},method='POST')
-        with build_opener(NoRedirect()).open(req,timeout=15) as response:
-            parsed=json.loads(response.read(65536))
-            if not isinstance(parsed,dict) or not parsed.get('message'):
-                raise RuntimeError('Response without message confirmation')
+        send_max_text(token,recipient,payload['text'])
     transport=transport or network_send
     for row in pending:
         if not row['max_id']:
@@ -148,7 +140,18 @@ def _process_bot_update(store,router,payload,provided_secret,expected_secret):
     return {'ok':True,'queued':True}
 
 
+_send_lock=threading.Lock()
+_last_send={}
+
+
 def send_max_text(token,user_id,text):
+    # MAX разрешает не больше двух сообщений в секунду в один диалог.
+    with _send_lock:
+        key=str(user_id)
+        wait=0.55-(time.monotonic()-_last_send.get(key,0))
+        if wait>0:
+            time.sleep(wait)
+        _last_send[key]=time.monotonic()
     req=Request('https://platform-api2.max.ru/messages?'+urlencode({'user_id':user_id}),data=json.dumps({'text':text},ensure_ascii=False).encode(),headers={'Authorization':token,'Content-Type':'application/json'},method='POST')
     with build_opener(NoRedirect()).open(req,timeout=15) as response:
         parsed=json.loads(response.read(65536))

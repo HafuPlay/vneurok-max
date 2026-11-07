@@ -1,4 +1,4 @@
-"""Small dependency-free local demo server. Put a hardened HTTPS proxy in front of a pilot."""
+"""Запуск интерфейса и приём сообщений бота."""
 import argparse
 import hmac
 import json
@@ -61,7 +61,7 @@ def handler_for(app):
     class Handler(BaseHTTPRequestHandler):
         server_version='Vneurok/0.1'
         def log_message(self,format,*args):
-            # No URL fragments, payloads, tokens or pupil data are written to access logs.
+            # Не записываем токены и сведения об учениках в журнал запросов.
             return
 
         def respond(self,status,payload,content_type='application/json; charset=utf-8',cookie=None):
