@@ -1,0 +1,2 @@
+# Runtime: CPython >= 3.12, standard library only.
+# No third-party runtime dependencies in this prototype.

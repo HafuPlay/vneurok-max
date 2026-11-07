@@ -1,0 +1,29 @@
+name: Проверка проекта
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Проверить сценарии
+        run: python -m unittest discover -s tests -v
+      - name: Собрать образ
+        run: docker build -t vneurok-max:${{ github.sha }} .
+      - name: Проверить запуск внутри образа
+        run: |
+          docker run --rm --network none --entrypoint python vneurok-max:${{ github.sha }} -c "import tempfile; from vneurok.bot import BotRouter; from vneurok.server import Application; d=tempfile.mkdtemp(); b=BotRouter(d); assert 'пример' in b.handle(123, '/demo', 'check'); print(b.handle(123, '/list', 'list'))"
+      - name: Сохранить Docker-образ
+        run: docker save vneurok-max:${{ github.sha }} | gzip > vneurok-max-docker.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vneurok-max-docker
+          path: vneurok-max-docker.tar.gz
+          retention-days: 30

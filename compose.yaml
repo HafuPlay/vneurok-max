@@ -1,0 +1,21 @@
+services:
+  vneurok:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      APP_ORIGIN: ${APP_ORIGIN:?Set an approved HTTPS origin}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:?Set in your private environment}
+      MAX_WEBHOOK_SECRET: ${MAX_WEBHOOK_SECRET:?Set a webhook secret}
+    volumes:
+      - vneurok_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+volumes:
+  vneurok_data:
